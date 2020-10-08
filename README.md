@@ -146,6 +146,8 @@ ParseCoreData().registerUserSubClass((username, password, emailAddress, {client,
 ```
 Providing a `ParseObject` as described above should still work, even if you have registered a different `SubClass`.
 
+For custom file classes have a lock at [here](#File).
+
 ## Add new values to objects
 To add a variable to an object call and retrieve it, call
 
@@ -522,6 +524,13 @@ LiveQuery server.
 liveQuery.client.unSubscribe(subscription);
 ```
 
+__Disconnection__
+In case the client's connection to the server breaks,
+LiveQuery will automatically try to reconnect.
+LiveQuery will wait at increasing intervals between reconnection attempts.
+By default, these intervals are set to `[0, 500, 1000, 2000, 5000, 10000]` for mobile and `[0, 500, 1000, 2000, 5000]` for web.
+You can change these by providing a custom list using the `liveListRetryIntervals` parameter at `Parse.initialize()` ("-1" means "do not try to reconnect").
+
 ## ParseLiveList
 ParseLiveList makes implementing a dynamic List as simple as possible.
 
@@ -809,11 +818,61 @@ QueryBuilder<ParseObject> query =
       ..whereRelatedTo('fruits', 'DietPlan', DietPlan.objectId);
 ```
 
+## File
+There are three different file classes in this SDK:
+- `ParseFileBase` is and abstract class and is the foundation of every file class that can be handled by this SDK.
+- `ParseFile` (former the only file class in the SDK) extends ParseFileBase and is by default used as the file class on every platform but web.
+This class uses a `File` from `dart:io` for storing the raw file.
+- `ParseWebFile` is the equivalent to ParseFile used at Flutter Web.
+This class uses an `Uint8List` for storing the raw file.
+
+These classes are used by default to represent files, but you can also build your own class extending ParseFileBase and provide a custom `ParseFileConstructor` similar to the `SubClasses`.
+
+Have a look at the example application for a small (non web) example.
+
+
+```dart
+//A short example for showing an image from a ParseFileBase
+Widget buildImage(ParseFileBase image){
+  return FutureBuilder<ParseFileBase>(
+    future: image.download(),
+    builder: (BuildContext context,
+    AsyncSnapshot<ParseFileBase> snapshot) {
+      if (snapshot.hasData) {
+        if (kIsWeb) {
+          return Image.memory((snapshot.data as ParseWebFile).file);
+        } else {
+          return Image.file((snapshot.data as ParseFile).file);
+        }
+      } else {
+        return CircularProgressIndicator();
+      }
+    },
+  );
+}
+```
+```dart
+//A short example for storing a selected picture
+//libraries: image_picker (https://pub.dev/packages/image_picker), image_picker_for_web (https://pub.dev/packages/image_picker_for_web)
+PickedFile pickedFile = await ImagePicker().getImage(source: ImageSource.gallery);
+ParseFileBase parseFile;
+if (kIsWeb) {
+  //Seems weird, but this lets you get the data from the selected file as an Uint8List very easily. 
+  ParseWebFile file = ParseWebFile(null, name: null, url: pickedFile.path);
+  await file.download();
+  parseFile = ParseWebFile(file.file, name: file.name);
+} else {
+  parseFile = ParseFile(File(pickedFile.path));
+}
+someParseObject.set("image", parseFile);
+//This saves the ParseObject as well as all of its children, and the ParseFileBase is such a child. 
+await someParseObject.save();
+```
+
 ## Other Features of this library
 Main:
 * Installation (View the example application)
 * GeoPoints (View the example application)
-* Files (View the example application)
 * Persistent storage
 * Debug Mode - Logging API calls
 * Manage Session ID's tokens

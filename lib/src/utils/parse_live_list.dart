@@ -6,19 +6,23 @@ import '../../parse_server_sdk.dart';
 
 // ignore_for_file: invalid_use_of_protected_member
 class ParseLiveList<T extends ParseObject> {
-  ParseLiveList._(this._query, this._listeningIncludes);
+  ParseLiveList._(this._query, this._listeningIncludes, this._lazyLoading) {
+    _debug = isDebugEnabled();
+  }
 
   static Future<ParseLiveList<T>> create<T extends ParseObject>(
       QueryBuilder<T> _query,
       {bool listenOnAllSubItems,
-      List<String> listeningIncludes}) {
+      List<String> listeningIncludes,
+      bool lazyLoading = true}) {
     final ParseLiveList<T> parseLiveList = ParseLiveList<T>._(
         _query,
         listenOnAllSubItems == true
             ? _toIncludeMap(
                 _query.limiters['include']?.toString()?.split(',') ??
                     <String>[])
-            : _toIncludeMap(listeningIncludes ?? <String>[]));
+            : _toIncludeMap(listeningIncludes ?? <String>[]),
+        lazyLoading);
 
     return parseLiveList._init().then((_) {
       return parseLiveList;
@@ -28,6 +32,7 @@ class ParseLiveList<T extends ParseObject> {
   List<ParseLiveListElement<T>> _list = List<ParseLiveListElement<T>>();
   StreamController<ParseLiveListEvent<T>> _eventStreamController;
   int _nextID = 0;
+  bool _debug;
 
   /// is object1 listed after object2?
   /// can return null
@@ -89,6 +94,8 @@ class ParseLiveList<T extends ParseObject> {
   //The included Items, where LiveList should look for updates.
   final Map<String, dynamic> _listeningIncludes;
 
+  final bool _lazyLoading;
+
   int get size {
     return _list.length;
   }
@@ -122,18 +129,21 @@ class ParseLiveList<T extends ParseObject> {
 
   Future<ParseResponse> _runQuery() async {
     final QueryBuilder<T> query = QueryBuilder<T>.copy(_query);
-    if (query.limiters.containsKey('order')) {
-      query.keysToReturn(
-          query.limiters['order'].toString().split(',').map((String string) {
-        if (string.startsWith('-')) {
-          return string.substring(1);
-        }
-        return string;
-      }).toList());
-    } else {
-      query.keysToReturn(List<String>());
+    if (_debug)
+      print('ParseLiveList: lazyLoading is ${_lazyLoading ? 'on' : 'off'}');
+    if (_lazyLoading) {
+      if (query.limiters.containsKey('order')) {
+        query.keysToReturn(
+            query.limiters['order'].toString().split(',').map((String string) {
+          if (string.startsWith('-')) {
+            return string.substring(1);
+          }
+          return string;
+        }).toList());
+      } else {
+        query.keysToReturn(List<String>());
+      }
     }
-
     return await query.query<T>();
   }
 
@@ -145,7 +155,8 @@ class ParseLiveList<T extends ParseObject> {
       _list = parseResponse.results
               ?.map<ParseLiveListElement<T>>((dynamic element) =>
                   ParseLiveListElement<T>(element,
-                      updatedSubItems: _listeningIncludes))
+                      updatedSubItems: _listeningIncludes,
+                      loaded: !_lazyLoading))
               ?.toList() ??
           List<ParseLiveListElement<T>>();
     }
@@ -245,7 +256,9 @@ class ParseLiveList<T extends ParseObject> {
 
   static Future<void> _loadIncludes(ParseObject object,
       {ParseObject oldObject, Map<String, dynamic> paths}) async {
-    if (object == null || paths == null || paths.isEmpty) return;
+    if (object == null || paths == null || paths.isEmpty) {
+      return;
+    }
 
     final List<Future<void>> loadingNodes = <Future<void>>[];
 
@@ -273,11 +286,13 @@ class ParseLiveList<T extends ParseObject> {
                   .then<void>((ParseResponse parseResponse) {
                 if (parseResponse.success &&
                     parseResponse.results.length == 1) {
+                  // ignore: deprecated_member_use_from_same_package
                   object.getObjectData()[key] = parseResponse.results[0];
                 }
               }));
               continue;
             } else {
+              // ignore: deprecated_member_use_from_same_package
               object.getObjectData()[key] = includedObject;
               //recursion
               loadingNodes
@@ -294,6 +309,7 @@ class ParseLiveList<T extends ParseObject> {
             loadingNodes.add(
                 queryBuilder.query().then<void>((ParseResponse parseResponse) {
               if (parseResponse.success && parseResponse.results.length == 1) {
+                // ignore: deprecated_member_use_from_same_package
                 object.getObjectData()[key] = parseResponse.results[0];
               }
             }));
@@ -320,7 +336,7 @@ class ParseLiveList<T extends ParseObject> {
       // ignore: avoid_as
       if ((includes[key] as Map<String, dynamic>).isNotEmpty) {
         includeList
-            .addAll(_toIncludeStringList(includes[key]).map((e) => '$key.$e'));
+            .addAll(_toIncludeStringList(includes[key]).map((String e) => '$key.$e'));
       }
     }
     return includeList;
@@ -332,7 +348,9 @@ class ParseLiveList<T extends ParseObject> {
     //(Hide first element, hide second, view first, view second => second is displayed twice)
     object = object?.clone(object?.toJson(full: true));
 
-    if (!fetchedIncludes) await _loadIncludes(object, paths: _includePaths);
+    if (!fetchedIncludes) {
+      await _loadIncludes(object, paths: _includePaths);
+    }
     for (int i = 0; i < _list.length; i++) {
       if (after(object, _list[i].object) != true) {
         _list.insert(
@@ -593,6 +611,7 @@ class ParseLiveListElement<T extends ParseObject> {
           _subscriptionQueue.whenComplete(() async {
             await ParseLiveList._loadIncludes(newObject,
                 oldObject: subObject, paths: _toKeyMap(path));
+            // ignore: deprecated_member_use_from_same_package
             parentObject.getObjectData()[currentKey.key] = newObject;
             if (!_streamController.isClosed) {
               _streamController
@@ -656,21 +675,20 @@ class ParseLiveListElement<T extends ParseObject> {
       if (subObject?.containsKey(keyVarUpdatedAt) == true) {
         final QueryBuilder<ParseObject> queryBuilder =
             QueryBuilder<ParseObject>(subObject)
-              ..keysToReturn([keyVarUpdatedAt])
+              ..keysToReturn(<String>[keyVarUpdatedAt])
               ..whereEqualTo(keyVarObjectId, subObject.objectId);
-        ParseResponse parseResponse = await queryBuilder.query();
-        if (parseResponse.success &&
-            (parseResponse.results.first as ParseObject).updatedAt !=
+        final ParseResponse parseResponse = await queryBuilder.query();
+        if (parseResponse.success && parseResponse.results.first.updatedAt !=
                 subObject.updatedAt) {
-          queryBuilder.limiters.remove("keys");
+          queryBuilder.limiters.remove('keys');
           queryBuilder.includeObject(_getIncludeList(path[key]));
-          ParseResponse parseResponse = await queryBuilder.query();
+          final ParseResponse parseResponse = await queryBuilder.query();
           if (parseResponse.success) {
             subObject = parseResponse.result.first;
 //            root.getObjectData()[key.key] = subObject;
-            if (key.subscription?.eventCallbacks?.containsKey("update") ==
+            if (key.subscription?.eventCallbacks?.containsKey('update') ==
                 true) {
-              key.subscription.eventCallbacks["update"](subObject);
+              key.subscription.eventCallbacks['update'](subObject);
             }
 //            key.subscription.eventCallbacks["update"](subObject);
             break;
@@ -748,6 +766,7 @@ class ParseLiveListWidget<T extends ParseObject> extends StatefulWidget {
     this.removedItemBuilder,
     this.listenOnAllSubItems,
     this.listeningIncludes,
+    this.lazyLoading = true,
   }) : super(key: key);
 
   final QueryBuilder<T> query;
@@ -768,12 +787,15 @@ class ParseLiveListWidget<T extends ParseObject> extends StatefulWidget {
   final bool listenOnAllSubItems;
   final List<String> listeningIncludes;
 
+  final bool lazyLoading;
+
   @override
   _ParseLiveListWidgetState<T> createState() => _ParseLiveListWidgetState<T>(
         query: query,
         removedItemBuilder: removedItemBuilder,
         listenOnAllSubItems: listenOnAllSubItems,
         listeningIncludes: listeningIncludes,
+        lazyLoading: lazyLoading,
       );
 
   static Widget defaultChildBuilder<T extends ParseObject>(
@@ -802,11 +824,13 @@ class _ParseLiveListWidgetState<T extends ParseObject>
       {@required this.query,
       @required this.removedItemBuilder,
       bool listenOnAllSubItems,
-      List<String> listeningIncludes}) {
+      List<String> listeningIncludes,
+      bool lazyLoading = true}) {
     ParseLiveList.create(
       query,
       listenOnAllSubItems: listenOnAllSubItems,
       listeningIncludes: listeningIncludes,
+      lazyLoading: lazyLoading,
     ).then((ParseLiveList<T> value) {
       setState(() {
         _liveList = value;
@@ -877,7 +901,7 @@ class _ParseLiveListWidgetState<T extends ParseObject>
 
   @override
   void dispose() {
-    _liveList.dispose();
+    _liveList?.dispose();
     _liveList = null;
     super.dispose();
   }

@@ -14,18 +14,23 @@ class ParseCoreData {
   ///
   /// This class should not be user unless switching servers during the app,
   /// which is odd. Should only be user by Parse.init
-  static Future<void> init(String appId, String serverUrl,
-      {bool debug,
-      String appName,
-      String liveQueryUrl,
-      String masterKey,
-      String clientKey,
-      String sessionId,
-      bool autoSendSessionId,
-      SecurityContext securityContext,
-      CoreStore store,
-      Map<String, ParseObjectConstructor> registeredSubClassMap,
-      ParseUserConstructor parseUserConstructor}) async {
+  static Future<void> init(
+    String appId,
+    String serverUrl, {
+    bool debug,
+    String appName,
+    String liveQueryUrl,
+    String masterKey,
+    String clientKey,
+    String sessionId,
+    bool autoSendSessionId,
+    SecurityContext securityContext,
+    CoreStore store,
+    Map<String, ParseObjectConstructor> registeredSubClassMap,
+    ParseUserConstructor parseUserConstructor,
+    ParseFileConstructor parseFileConstructor,
+    List<int> liveListRetryIntervals,
+  }) async {
     _instance = ParseCoreData._init(appId, serverUrl);
 
     _instance.storage ??=
@@ -55,10 +60,18 @@ class ParseCoreData {
     if (securityContext != null) {
       _instance.securityContext = securityContext;
     }
+    if (liveListRetryIntervals != null) {
+      _instance.liveListRetryIntervals = liveListRetryIntervals;
+    } else {
+      _instance.liveListRetryIntervals = parseIsWeb
+          ? <int>[0, 500, 1000, 2000, 5000]
+          : <int>[0, 500, 1000, 2000, 5000, 10000];
+    }
 
     _instance._subClassHandler = ParseSubClassHandler(
       registeredSubClassMap: registeredSubClassMap,
       parseUserConstructor: parseUserConstructor,
+      parseFileConstructor: parseFileConstructor,
     );
   }
 
@@ -74,6 +87,7 @@ class ParseCoreData {
   bool debug;
   CoreStore storage;
   ParseSubClassHandler _subClassHandler;
+  List<int> liveListRetryIntervals;
 
   void registerSubClass(
       String className, ParseObjectConstructor objectConstructor) {
@@ -82,6 +96,10 @@ class ParseCoreData {
 
   void registerUserSubClass(ParseUserConstructor parseUserConstructor) {
     _subClassHandler.registerUserSubClass(parseUserConstructor);
+  }
+
+  void registerFileSubClass(ParseFileConstructor parseFileConstructor) {
+    _subClassHandler.registerFileSubClass(parseFileConstructor);
   }
 
   ParseObject createObject(String classname) {
@@ -94,6 +112,9 @@ class ParseCoreData {
     return _subClassHandler.createParseUser(username, password, emailAddress,
         sessionToken: sessionToken, debug: debug, client: client);
   }
+
+  ParseFileBase createFile({String url, String name}) =>
+      _subClassHandler.createFile(name: name, url: url);
 
   /// Sets the current sessionId.
   ///
